@@ -1,19 +1,19 @@
 from __future__ import annotations
-
 import os
 import socket
 from datetime import datetime
-
 from typing import Dict, List
 from uuid import UUID
-
 from fastapi import FastAPI, HTTPException
 from fastapi import Query, Path
 from typing import Optional
-
 from models.person import PersonCreate, PersonRead, PersonUpdate
 from models.address import AddressCreate, AddressRead, AddressUpdate
 from models.health import Health
+
+# --- NEW IMPORTS ---
+from models.organization import OrganizationCreate, OrganizationRead, OrganizationUpdate
+from models.project import ProjectCreate, ProjectRead, ProjectUpdate
 
 port = int(os.environ.get("FASTAPIPORT", 8000))
 
@@ -22,6 +22,10 @@ port = int(os.environ.get("FASTAPIPORT", 8000))
 # -----------------------------------------------------------------------------
 persons: Dict[UUID, PersonRead] = {}
 addresses: Dict[UUID, AddressRead] = {}
+
+# --- NEW DATABASES ---
+organizations: Dict[UUID, OrganizationRead] = {}
+projects: Dict[UUID, ProjectRead] = {}
 
 app = FastAPI(
     title="Person/Address API",
@@ -32,7 +36,6 @@ app = FastAPI(
 # -----------------------------------------------------------------------------
 # Address endpoints
 # -----------------------------------------------------------------------------
-
 def make_health(echo: Optional[str], path_echo: Optional[str]=None) -> Health:
     return Health(
         status=200,
@@ -45,7 +48,6 @@ def make_health(echo: Optional[str], path_echo: Optional[str]=None) -> Health:
 
 @app.get("/health", response_model=Health)
 def get_health_no_path(echo: str | None = Query(None, description="Optional echo string")):
-    # Works because path_echo is optional in the model
     return make_health(echo=echo, path_echo=None)
 
 @app.get("/health/{path_echo}", response_model=Health)
@@ -71,7 +73,6 @@ def list_addresses(
     country: Optional[str] = Query(None, description="Filter by country"),
 ):
     results = list(addresses.values())
-
     if street is not None:
         results = [a for a in results if a.street == street]
     if city is not None:
@@ -82,7 +83,6 @@ def list_addresses(
         results = [a for a in results if a.postal_code == postal_code]
     if country is not None:
         results = [a for a in results if a.country == country]
-
     return results
 
 @app.get("/addresses/{address_id}", response_model=AddressRead)
@@ -105,7 +105,6 @@ def update_address(address_id: UUID, update: AddressUpdate):
 # -----------------------------------------------------------------------------
 @app.post("/persons", response_model=PersonRead, status_code=201)
 def create_person(person: PersonCreate):
-    # Each person gets its own UUID; stored as PersonRead
     person_read = PersonRead(**person.model_dump())
     persons[person_read.id] = person_read
     return person_read
@@ -122,7 +121,6 @@ def list_persons(
     country: Optional[str] = Query(None, description="Filter by country of at least one address"),
 ):
     results = list(persons.values())
-
     if uni is not None:
         results = [p for p in results if p.uni == uni]
     if first_name is not None:
@@ -135,13 +133,10 @@ def list_persons(
         results = [p for p in results if p.phone == phone]
     if birth_date is not None:
         results = [p for p in results if str(p.birth_date) == birth_date]
-
-    # nested address filtering
     if city is not None:
         results = [p for p in results if any(addr.city == city for addr in p.addresses)]
     if country is not None:
         results = [p for p in results if any(addr.country == country for addr in p.addresses)]
-
     return results
 
 @app.get("/persons/{person_id}", response_model=PersonRead)
@@ -160,6 +155,70 @@ def update_person(person_id: UUID, update: PersonUpdate):
     return persons[person_id]
 
 # -----------------------------------------------------------------------------
+# Organization endpoints (NEW)
+# -----------------------------------------------------------------------------
+@app.post("/organizations", response_model=OrganizationRead, status_code=201)
+def create_organization(org: OrganizationCreate):
+    if org.id in organizations:
+        raise HTTPException(status_code=400, detail="Organization with this ID already exists")
+    organizations[org.id] = OrganizationRead(**org.model_dump())
+    return organizations[org.id]
+
+@app.get("/organizations", response_model=List[OrganizationRead])
+def list_organizations(name: Optional[str] = Query(None, description="Organization name to filter")):
+    results = list(organizations.values())
+    if name is not None:
+        results = [o for o in results if o.name == name]
+    return results
+
+@app.get("/organizations/{org_id}", response_model=OrganizationRead)
+def get_organization(org_id: UUID):
+    if org_id not in organizations:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return organizations[org_id]
+
+@app.patch("/organizations/{org_id}", response_model=OrganizationRead)
+def update_organization(org_id: UUID, update: OrganizationUpdate):
+    if org_id not in organizations:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    stored = organizations[org_id].model_dump()
+    stored.update(update.model_dump(exclude_unset=True))
+    organizations[org_id] = OrganizationRead(**stored)
+    return organizations[org_id]
+
+# -----------------------------------------------------------------------------
+# Project endpoints (NEW)
+# -----------------------------------------------------------------------------
+@app.post("/projects", response_model=ProjectRead, status_code=201)
+def create_project(project: ProjectCreate):
+    if project.id in projects:
+        raise HTTPException(status_code=400, detail="Project with this ID already exists")
+    projects[project.id] = ProjectRead(**project.model_dump())
+    return projects[project.id]
+
+@app.get("/projects", response_model=List[ProjectRead])
+def list_projects(title: Optional[str] = Query(None, description="Project title to filter")):
+    results = list(projects.values())
+    if title is not None:
+        results = [p for p in results if p.title == title]
+    return results
+
+@app.get("/projects/{project_id}", response_model=ProjectRead)
+def get_project(project_id: UUID):
+    if project_id not in projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return projects[project_id]
+
+@app.patch("/projects/{project_id}", response_model=ProjectRead)
+def update_project(project_id: UUID, update: ProjectUpdate):
+    if project_id not in projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    stored = projects[project_id].model_dump()
+    stored.update(update.model_dump(exclude_unset=True))
+    projects[project_id] = ProjectRead(**stored)
+    return projects[project_id]
+
+# -----------------------------------------------------------------------------
 # Root
 # -----------------------------------------------------------------------------
 @app.get("/")
@@ -171,5 +230,4 @@ def root():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
